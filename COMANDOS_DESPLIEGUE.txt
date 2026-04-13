@@ -1,0 +1,61 @@
+# =========================================
+# COMANDOS: SSH, build, levantar servicios
+# CPU Monitor y Client Simulator
+# =========================================
+
+# --- A) Desde tu PC (local) ---
+# 1) Entrar a la VM
+#gcloud compute ssh sfd-vm-a --zone us-central1-a --no-tunnel-through-iap
+
+# --- B) Desde Cloud Shell ---
+# 1) Entrar a la VM
+#gcloud compute ssh sfd-vm-a --zone us-central1-a --no-tunnel-through-iap
+
+# --- C) Dentro de la VM ---
+# 1) Actualizar repo
+cd /opt/pf-sd
+#git pull --rebase
+
+git log -1 --oneline
+
+# 2) Build
+./start-all.sh
+
+# 3) Levantar servicios (con WebServer del profe en 8085)
+set -a; source /opt/pf-sd/.env; set +a
+./run-services.sh stop || true
+START_PROF_WEBSERVER=1 PROF_WEBSERVER_PORT=8085 ./run-services.sh start
+
+# 4) Verificar
+./run-services.sh status
+curl http://127.0.0.1:8085/status
+curl http://127.0.0.1:8085/config.js
+
+# --- D) CPU Monitor (en la VM) ---
+cd /opt/pf-sd/cpu-monitor
+mvn -q -DskipTests package
+java -jar target/cpu-monitor-1.0.0.jar 5
+
+# --- E) Client Simulator (en la VM) ---
+cd /opt/pf-sd/client-simulator
+mvn -q -DskipTests package
+java -jar target/client-simulator-1.0.0.jar 10 4 1000 30
+
+# --- F) CPU Monitor (en tu PC) ---
+# (No recomendado porque mide tu CPU local, no la de la VM)
+#cd /home/soriadg/Documentos/PFsistemasDistribuidos/PF_SD_20260111_180929/PF_SD/cpu-monitor
+#mvn -q -DskipTests package
+#java -jar target/cpu-monitor-1.0.0.jar 5
+
+# --- G) Client Simulator (en tu PC, apuntando a la VM) ---
+cd /home/soriadg/Documentos/PFsistemasDistribuidos/PF_SD_20260111_180929/PF_SD/client-simulator
+mvn -q -DskipTests package
+
+AUTH_BASE_URL=http://35.184.114.143:8081 \
+ACCOUNT_BASE_URL=http://35.184.114.143:8080 \
+java -jar target/client-simulator-1.0.0.jar 10 4 1000 30
+
+# (Alternativa usando URLs completas)
+#AUTH_URL=http://35.184.114.143:8081/auth \
+#ACCOUNT_URL=http://35.184.114.143:8080/account \
+#java -jar target/client-simulator-1.0.0.jar 10 4 1000 30

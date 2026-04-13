@@ -8,6 +8,7 @@ import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 
 import java.util.*;
+import java.util.Locale;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -25,8 +26,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class ClientSimulator {
 
-    private static final String AUTH_URL = "http://localhost:8081/auth";
-    private static final String ACCOUNT_URL = "http://localhost:8080/account";
+    private static final String AUTH_URL = resolveUrl("AUTH_URL", "AUTH_BASE_URL", "http://localhost:8081/auth", "/auth");
+    private static final String ACCOUNT_URL = resolveUrl("ACCOUNT_URL", "ACCOUNT_BASE_URL", "http://localhost:8080/account", "/account");
 
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final Random random = new Random();
@@ -78,6 +79,8 @@ public class ClientSimulator {
         System.out.println("Hilos (h): " + h);
         System.out.println("Depósito inicial (p): $" + p);
         System.out.println("Transacciones/minuto (t): " + t);
+        System.out.println("Auth URL: " + AUTH_URL);
+        System.out.println("Account URL: " + ACCOUNT_URL);
         System.out.println("==============================================\n");
 
         // Crear clientes simulados
@@ -205,6 +208,24 @@ public class ClientSimulator {
         } catch (Exception e) {
             failedTransactions.incrementAndGet();
         }
+    }
+
+    private static String resolveUrl(String primaryEnv, String baseEnv, String fallback, String suffix) {
+        String value = System.getenv(primaryEnv);
+        if (value == null || value.isBlank()) {
+            value = System.getenv(baseEnv);
+        }
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String trimmed = value.trim();
+        if (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        if (trimmed.toLowerCase(Locale.ROOT).endsWith(suffix)) {
+            return trimmed;
+        }
+        return trimmed + suffix;
     }
 
     private static String generateCURP(int index) {
