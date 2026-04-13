@@ -1,228 +1,171 @@
-# Sistema Financiero de Dinero Electrónico - Proyecto Final
+# Technical Documentation: Distributed Electronic Money Financial System
 
-## Resumen Ejecutivo
+## 1. Overview
+The Electronic Money Financial System (EMFS) is a distributed application designed to manage financial transactions through a microservices-based architecture. The system leverages asynchronous communication via Google Cloud Pub/Sub and ensures data persistence using Google Cloud SQL (PostgreSQL). It is built with Java 17 and Spring Boot.
 
-Sistema distribuido de dinero electrónico implementado con microservicios REST en Java, arquitectura event-driven con Google Cloud Pub/Sub, y despliegue en Google Cloud Platform.
+---
 
-## Componentes Completados ✅
+## 2. System Architecture
+The system follows an event-driven architectural pattern. Services are decoupled, allowing for independent scaling and improved fault tolerance.
 
-### Microservicios Backend (Java + Spring Boot)
+### Component Diagram
+```mermaid
+graph TD
+    subgraph User_Interface
+        Frontend[Web Interface - Port 8085]
+        Simulator[Client Simulator]
+    end
 
-1. **AuthService** (Puerto 8081) - Autenticación JWT
-2. **AccountService** (Puerto 8080) - Gestión de cuentas
-3. **TransactionService** - Procesamiento asíncrono vía Pub/Sub
-4. **AuditService** - Auditoría de transacciones
-5. **ReportService** (Puerto 8084) - APIs de reportes y métricas
+    subgraph Application_Layer
+        Auth[AuthService - Port 8081]
+        Account[AccountService - Port 8080]
+        Report[ReportService - Port 8084]
+    end
 
-### Interfaces Web
+    subgraph Messaging_Infrastructure
+        Topic_TX[Pub/Sub Topic: tx-events]
+        Topic_Conf[Pub/Sub Topic: tx-confirmed]
+    end
 
-6. **WebInterface** (Puerto 8085)
-   - **Interfaz de Usuario:** `/index.html` - Registro, login, depósitos, retiros, transferencias, historial
-   - **Panel de Administrador:** `/admin.html` - Balances, gráficos, logs, estadísticas
+    subgraph Processing_Layer
+        TX_Processor[TransactionService]
+        Auditor[AuditService]
+    end
 
-### Herramientas de Simulación
+    subgraph Data_Storage
+        Database[(Cloud SQL - PostgreSQL)]
+    end
 
-7. **ClientSimulator** - Simulador de n clientes con h hilos
-8. **CPUMonitor** - Monitor TUI con Lanterna para visualizar uso de CPU
-
-## Requisitos del Proyecto (Checklist)
-
-- [x] 1. Arquitectura de microservicios REST
-- [x] 2. AuthService con JWT
-- [x] 3. AccountService (balance, depósitos, retiros, transferencias)
-- [x] 4. Almacenamiento en Google Cloud (PostgreSQL + Pub/Sub)
-- [x] 5. TransactionService consumiendo Pub/Sub
-- [x] 6. AuditService escuchando Pub/Sub
-- [x] 7. Réplicas de AccountService y TransactionService
-- [x] 8. Programa simulador de clientes (n, h, p, t)
-- [x] 9. Monitor de CPU con Lanterna
-- [x] 10. Interfaz web de usuario
-- [x] 11. Interfaz web de administrador con gráficos
-
-## Inicio Rápido
-
-### 1. Prerequisitos
-
-```bash
-# Java 17, Maven, PostgreSQL, Google Cloud SDK
+    %% Flow of Data
+    Frontend --> Auth
+    Frontend --> Account
+    Frontend --> Report
+    Simulator --> Account
+    
+    Account --> Topic_TX
+    Topic_TX --> TX_Processor
+    TX_Processor --> Database
+    TX_Processor --> Topic_Conf
+    
+    Topic_Conf --> Auditor
+    Auditor --> Database
+    
+    Report --> Database
+    Auth --> Database
+    Account --> Database
 ```
 
-### 2. Configurar GCP
+---
 
-```bash
-# Cloud SQL Proxy
-./cloud-sql-proxy --port 5432 sistemafinancierodistribuido:us-central1:sfd-db
+## 3. Transaction Lifecycle
+This section details the step-by-step process of a financial transaction, from the initial request to the final audit log.
 
-# Crear tópicos Pub/Sub
-gcloud pubsub topics create tx-events tx-confirmed
-gcloud pubsub subscriptions create tx-events-sub --topic=tx-events
-gcloud pubsub subscriptions create tx-confirmed-audit-sub --topic=tx-confirmed
+### Sequence Diagram
+```mermaid
+sequenceDiagram
+    participant User as User / Simulator
+    participant AC as AccountService
+    participant PS as Google Cloud Pub/Sub
+    participant TS as TransactionService
+    participant DB as PostgreSQL
+    participant AU as AuditService
+
+    User->>AC: POST /api/accounts/transfer
+    Note over AC: Validate balance and generate event
+    AC->>PS: Publish to 'tx-events'
+    AC-->>User: 202 Accepted
+
+    PS->>TS: Consume event
+    Note over TS: Process transaction logic
+    TS->>DB: Update balances (Atomic Operation)
+    TS->>PS: Publish to 'tx-confirmed'
+
+    PS->>AU: Consume confirmation
+    AU->>DB: Insert record into audit_logs
+    Note over AU: Finalize immutable record
 ```
 
-### 3. Compilar Todo
+---
 
-```bash
-cd /ruta/a/PF_SD
+## 4. Microservices Description
 
-# Compilar cada servicio
-for dir in auth-service account-service audit-service web-interface client-simulator cpu-monitor; do
-    cd $dir && mvn clean package -DskipTests && cd ..
-done
+### 4.1 AuthService
+Handles identity management and security.
+- Technology: Spring Security and JSON Web Tokens (JWT).
+- Responsibilities: User registration, authentication, and token issuance.
+- Port: 8081.
 
-# Servicios adicionales
-cd transaction-service && mvn clean package -DskipTests && cd ..
-cd report-service/report-service && mvn clean package -DskipTests && cd ../..
+### 4.2 AccountService
+The entry point for user-facing financial operations.
+- Responsibilities: Balance checks, deposit requests, and transfer initiations.
+- Design: Acts as a producer for the messaging system to ensure non-blocking operations.
+- Port: 8080.
+
+### 4.3 TransactionService
+The core business logic engine for processing payments.
+- Responsibilities: Ensuring the integrity of balance updates and managing the state of transactions.
+- Mechanism: Pulls/Pushes data from Pub/Sub to maintain eventual consistency.
+
+### 4.4 AuditService
+Provides a reliable history of all confirmed actions.
+- Responsibilities: Logging successful transactions for compliance and security monitoring.
+- Data: Writes to an append-only audit table.
+
+### 4.5 ReportService
+Facilitates data visualization for administrative purposes.
+- Responsibilities: Querying the database for system-wide metrics and user statistics.
+- Port: 8084.
+
+---
+
+## 5. Data Model
+The system uses a relational schema designed for financial integrity.
+
+### Entity-Relationship Diagram
+```mermaid
+erDiagram
+    USERS ||--o{ ACCOUNTS : "possess"
+    ACCOUNTS ||--o{ TRANSACTIONS : "initiate"
+    TRANSACTIONS ||--|| AUDIT_LOGS : "registered_in"
+
+    USERS {
+        string curp PK
+        string full_name
+        string encoded_password
+        string account_role
+    }
+
+    ACCOUNTS {
+        int id PK
+        string owner_curp FK
+        double bank_balance
+        double wallet_balance
+    }
+
+    TRANSACTIONS {
+        uuid transaction_id PK
+        int source_id
+        int destination_id
+        double amount
+        timestamp creation_date
+    }
 ```
 
-### 4. Ejecutar Servicios (en terminales separadas)
+---
 
-```bash
-# Terminal 1: Cloud SQL Proxy
-./cloud-sql-proxy --port 5432 sistemafinancierodistribuido:us-central1:sfd-db
+## 6. Operation and Monitoring
 
-# Terminal 2: AuthService
-cd auth-service && java -jar target/auth-service-*.jar
+### Client Simulator
+A multi-threaded tool used to stress-test the system by simulating various users performing concurrent transactions. It allows tuning parameters such as thread count and transaction frequency.
 
-# Terminal 3: AccountService
-cd account-service && java -jar target/account-service-*.jar
+### CPU Monitor
+A terminal-based monitoring tool (TUI) utilizing the Lanterna library. It provides real-time hardware utilization metrics (CPU/RAM) across the distributed environment using the OSHI API.
 
-# Terminal 4: TransactionService
-cd transaction-service && java -jar target/transaction-service-*.jar
+### Infrastructure Management
+The system is managed through several shell scripts:
+- run-all-services.sh: Initializes all microservices.
+- stop-all-services.sh: Terminates all running instances.
+- check-services.sh: Verifies the health and availability of the system.
 
-# Terminal 5: AuditService
-cd audit-service && java -jar target/audit-service-*.jar
-
-# Terminal 6: ReportService
-cd report-service/report-service && java -jar target/report-service-*.jar
-
-# Terminal 7: WebInterface
-cd web-interface && java -jar target/web-interface-*.jar
-```
-
-### 5. Acceder a las Interfaces Web
-
-- **Usuario:** http://localhost:8085/index.html
-- **Administrador:** http://localhost:8085/admin.html
-
-**Nota (GCP):** en `web-interface` puedes configurar las URLs de los APIs con
-`APP_ACCOUNT_BASE_URL`, `APP_AUTH_BASE_URL` y `APP_REPORT_BASE_URL`. En `auth-service`,
-usa `APP_CORS_ALLOWED_ORIGINS` con la URL pública del frontend.
-
-### 6. Ejecutar Simulador
-
-```bash
-cd client-simulator
-java -jar target/client-simulator-1.0.0.jar 10 4 1000 30
-# 10 clientes, 4 hilos, $1000 iniciales, 30 tx/min
-```
-
-### 7. Ejecutar Monitor de CPU
-
-```bash
-cd cpu-monitor
-java -jar target/cpu-monitor-1.0.0.jar 5
-# Actualizar cada 5 segundos
-```
-
-## Estructura del Proyecto
-
-```
-PF_SD/
-├── INSTRUCCIONES.md              # Documentación completa
-├── README.md                     # Este archivo
-├── schema.sql                    # Esquema de base de datos
-├── auth-service/                 # Autenticación JWT
-├── account-service/              # Gestión de cuentas
-├── audit-service/                # Auditoría
-├── transaction-service/          # Procesamiento de transacciones
-├── web-interface/                # Interfaces web (usuario + admin)
-│   └── src/main/resources/static/
-│       ├── index.html           # Interfaz usuario
-│       ├── admin.html           # Panel administrador
-│       ├── css/                 # Estilos
-│       └── js/                  # Lógica frontend
-├── report-service/
-│   ├── report-service/          # APIs de reportes
-│   └── transaction-service/     # Copia legacy (no usar)
-├── client-simulator/            # Simulador de clientes
-└── cpu-monitor/                 # Monitor TUI con Lanterna
-```
-
-## Características Principales
-
-### Seguridad
-- Autenticación JWT
-- Validación de CURP (18 caracteres)
-- Tokens firmados digitalmente
-
-### Arquitectura Distribuida
-- Microservicios independientes
-- Comunicación asíncrona vía Pub/Sub
-- Procesamiento event-driven
-- Réplicas para alta disponibilidad
-
-### Consistencia
-- Transacciones ACID en PostgreSQL
-- Idempotencia en procesamiento de eventos
-- Auditoría completa de operaciones
-- Saldo total del sistema siempre consistente
-
-### Interfaces Web Modernas
-- **Usuario:** Dashboard intuitivo, operaciones en tiempo real, historial de transacciones
-- **Administrador:** Gráficos interactivos (Chart.js), estadísticas en tiempo real, gestión de usuarios
-
-### Monitoreo
-- Monitor de CPU con Lanterna (TUI)
-- Métricas por servicio
-- Visualización en tiempo real
-
-## Pruebas
-
-### Prueba de Tolerancia a Fallos
-
-```bash
-# 1. Iniciar simulador de clientes
-# 2. Detener TransactionService (Ctrl+C)
-# 3. Mensajes quedan en Pub/Sub
-# 4. Reiniciar TransactionService
-# 5. Verificar que procesa mensajes pendientes
-```
-
-### Verificar Consistencia
-
-```bash
-# Monitorear saldo total (debe mantenerse constante)
-watch -n 5 "psql 'host=127.0.0.1 port=5432 dbname=sfd user=app_user' \
-  -c 'SELECT SUM(saldo_banco + saldo_billetera) FROM cuentas;'"
-```
-
-## Tecnologías Utilizadas
-
-- **Backend:** Java 17, Spring Boot 3.2.6
-- **Base de Datos:** PostgreSQL 17 (Google Cloud SQL)
-- **Mensajería:** Google Cloud Pub/Sub
-- **Frontend:** HTML5, CSS3, JavaScript vanilla, Chart.js
-- **Monitoreo:** Lanterna (TUI), OSHI (métricas sistema)
-- **Seguridad:** JWT (jjwt), BCrypt
-- **Build:** Maven
-
-## URLs Principales
-
-| Servicio | URL | Puerto |
-|----------|-----|--------|
-| AuthService | http://localhost:8081 | 8081 |
-| AccountService | http://localhost:8080 | 8080 |
-| ReportService | http://localhost:8084 | 8084 |
-| Interfaz Usuario | http://localhost:8085/index.html | 8085 |
-| Panel Admin | http://localhost:8085/admin.html | 8085 |
-
-## Documentación Completa
-
-Para instrucciones detalladas de instalación, configuración, y despliegue, consultar:
-
-**[INSTRUCCIONES.md](INSTRUCCIONES.md)**
-
-## Autor
-
-Proyecto Final - Sistemas Distribuidos
-M. en C. Ukranio Coronilla
+---
+*Technical documentation prepared for the Final Project of Distributed Systems.*
